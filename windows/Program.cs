@@ -30,6 +30,7 @@ internal sealed class MainForm : Form
     private readonly ProgressBar progress = new() { Dock = DockStyle.Fill, Style = ProgressBarStyle.Marquee, Visible = false };
     private readonly Label status = new() { Text = "Ready", AutoSize = true };
     private readonly Button downloadButton = new() { Text = "Download IPA", AutoSize = true };
+    private readonly Button openFolderButton = new() { Text = "Open folder", AutoSize = true };
     private Process? runningProcess;
 
     public MainForm()
@@ -44,6 +45,7 @@ internal sealed class MainForm : Form
         var browseOutputButton = new Button { Text = "Choose folder…", AutoSize = true };
         browseOutputButton.Click += (_, _) => BrowseForOutputFolder();
 
+        openFolderButton.Click += (_, _) => OpenOutputFolder();
         downloadButton.Click += async (_, _) => await DownloadIpaAsync();
 
         var form = new TableLayoutPanel
@@ -51,15 +53,10 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(12),
             ColumnCount = 1,
-            RowCount = 8
+            RowCount = 7
         };
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (var i = 0; i < 6; i++)
+            form.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         form.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         form.Controls.Add(new Label { Text = "ipatool executable:", AutoSize = true }, 0, 0);
@@ -69,7 +66,6 @@ internal sealed class MainForm : Form
         form.Controls.Add(new Label { Text = "IPA output folder:", AutoSize = true, Padding = new Padding(0, 8, 0, 0) }, 0, 4);
         form.Controls.Add(CreateRow(outputFolder, browseOutputButton), 0, 5);
         form.Controls.Add(CreateActionRow(), 0, 6);
-        form.Controls.Add(output, 0, 7);
 
         var container = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2 };
         container.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -79,13 +75,11 @@ internal sealed class MainForm : Form
         Controls.Add(container);
 
         executablePath.Text = FindIpatool() ?? "ipatool.exe";
-        outputFolder.Text = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "ipatoolUI");
+        outputFolder.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "ipatoolUI");
         Directory.CreateDirectory(outputFolder.Text);
     }
 
-    private Control CreateRow(Control editor, Control button)
+    private static Control CreateRow(Control editor, Control button)
     {
         var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -97,13 +91,15 @@ internal sealed class MainForm : Form
 
     private Control CreateActionRow()
     {
-        var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3 };
+        var row = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         row.Controls.Add(downloadButton, 0, 0);
-        row.Controls.Add(progress, 1, 0);
-        row.Controls.Add(status, 2, 0);
+        row.Controls.Add(openFolderButton, 1, 0);
+        row.Controls.Add(progress, 2, 0);
+        row.Controls.Add(status, 3, 0);
         return row;
     }
 
@@ -128,6 +124,14 @@ internal sealed class MainForm : Form
         };
         if (dialog.ShowDialog(this) == DialogResult.OK)
             outputFolder.Text = dialog.SelectedPath;
+    }
+
+    private void OpenOutputFolder()
+    {
+        var path = outputFolder.Text.Trim();
+        if (string.IsNullOrWhiteSpace(path)) return;
+        Directory.CreateDirectory(path);
+        Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
     }
 
     private async Task DownloadIpaAsync()
@@ -187,6 +191,8 @@ internal sealed class MainForm : Form
             await process.WaitForExitAsync();
             AppendOutput($"\r\nExit code: {process.ExitCode}");
             SetStatus(process.ExitCode == 0 ? "Download complete" : "Download failed");
+            if (process.ExitCode == 0)
+                AppendOutput($"\r\nSaved .ipa files:\r\n{GetSavedFilesText(destination)}");
         }
         catch (Exception exception)
         {
@@ -200,10 +206,19 @@ internal sealed class MainForm : Form
         }
     }
 
+    private static string GetSavedFilesText(string destination)
+    {
+        var files = Directory.EnumerateFiles(destination, "*.ipa", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(File.GetLastWriteTime)
+            .Select(Path.GetFileName)
+            .ToArray();
+        return files.Length == 0 ? "No .ipa files found in the selected folder." : string.Join(Environment.NewLine, files);
+    }
+
     private static bool IsBundleIdentifier(string value)
     {
         var parts = value.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length >= 2 && parts.All(part => part.All(character => char.IsLetterOrDigit(character) || character == '-' || character == '_'));
+        return parts.Length >= 2 && parts.All(part => part.All(character => char.IsLetterOrDigit(character) || character is '-' or '_'));
     }
 
     private void SetBusy(bool busy, string message)
