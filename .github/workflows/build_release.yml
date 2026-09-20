@@ -121,22 +121,28 @@ jobs:
           retention-days: 30
 
   build-windows:
-    name: Build Windows App
+    name: Build Windows App with ipatool.exe
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout ipatoolUI
         uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.x
 
-      - name: Restore dependencies
+      - name: Restore Windows app dependencies
         run: dotnet restore windows/ipatoolUI.Windows.csproj
 
-      - name: Build Windows executable
+      - name: Publish Windows app
         run: >-
           dotnet publish windows/ipatoolUI.Windows.csproj
           --configuration Release
@@ -146,19 +152,36 @@ jobs:
           -p:PublishSingleFile=true
           -p:IncludeNativeLibrariesForSelfExtract=true
 
-      - name: Package Windows app
+      - name: Clone majd/ipatool
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/majd/ipatool.git "$env:RUNNER_TEMP/ipatool"
+
+      - name: Build ipatool.exe for Windows
+        shell: pwsh
+        working-directory: ${{ runner.temp }}/ipatool
+        run: |
+          go version
+          go mod download
+          go build -trimpath -ldflags="-s -w" -o "$env:GITHUB_WORKSPACE/windows/publish/ipatool.exe" .
+          if (-not (Test-Path "$env:GITHUB_WORKSPACE/windows/publish/ipatool.exe")) {
+            throw "ipatool.exe was not created"
+          }
+          & "$env:GITHUB_WORKSPACE/windows/publish/ipatool.exe" --version
+
+      - name: Package Windows app and ipatool.exe
         shell: pwsh
         run: |
+          $version = if ("${{ github.event_name }}" -eq "push") { "${{ github.ref_name }}" } else { "${{ github.event.inputs.version }}" }
           Compress-Archive `
             -Path "windows/publish/*" `
-            -DestinationPath "ipatoolUI-windows-${{ github.run_number }}.zip" `
+            -DestinationPath "ipatoolUI-windows-$version.zip" `
             -Force
 
-      - name: Upload Windows artifact
+      - name: Upload Windows app and ipatool.exe
         uses: actions/upload-artifact@v4
         with:
           name: ipatoolUI-${{ github.run_number }}-windows
-          path: ipatoolUI-windows-${{ github.run_number }}.zip
+          path: ipatoolUI-windows-*.zip
           if-no-files-found: error
           retention-days: 30
 
@@ -202,12 +225,15 @@ jobs:
             | `ipatoolUI-${{ steps.version.outputs.version }}-universal.dmg` | macOS Universal |
             | `ipatoolUI-${{ steps.version.outputs.version }}-arm64.dmg` | macOS Apple Silicon |
             | `ipatoolUI-${{ steps.version.outputs.version }}-x86_64.dmg` | macOS Intel |
-            | `ipatoolUI-windows-${{ github.run_number }}.zip` | Windows x64 |
+            | `ipatoolUI-windows-${{ steps.version.outputs.version }}.zip` | Windows x64 app + ipatool.exe |
+
+            ## Windows
+            The Windows ZIP contains the native Windows launcher and a Windows `ipatool.exe` built from [majd/ipatool](https://github.com/majd/ipatool). Start `ipatoolUI.exe`, select the bundled `ipatool.exe` if needed, enter an App Store bundle ID, and download the IPA.
 
             ## Requirements
             - macOS 13.0 or later for the native macOS app
-            - Windows x64 for the Windows companion app
-            - [ipatool](https://github.com/majd/ipatool) installed
+            - Windows x64 for the Windows app
+            - Apple ID authentication may be required by ipatool
 
           draft: false
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
