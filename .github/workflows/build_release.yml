@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-macos:
     name: Build macOS App
     runs-on: macos-14
 
@@ -34,6 +34,7 @@ jobs:
 
       - name: Get version
         id: version
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
             VERSION=${GITHUB_REF#refs/tags/}
@@ -77,16 +78,13 @@ jobs:
           X86_APP="build/x86_64/Build/Products/Release/ipatoolUI.app"
           UNIVERSAL_APP="build/universal/ipatoolUI.app"
 
-          # Copy ARM64 app as base
           cp -R "$ARM64_APP" "$UNIVERSAL_APP"
 
-          # Create universal binary using lipo
           lipo -create \
             "$ARM64_APP/Contents/MacOS/ipatoolUI" \
             "$X86_APP/Contents/MacOS/ipatoolUI" \
             -output "$UNIVERSAL_APP/Contents/MacOS/ipatoolUI"
 
-          # Verify universal binary
           echo "Universal binary architectures:"
           lipo -info "$UNIVERSAL_APP/Contents/MacOS/ipatoolUI"
 
@@ -95,12 +93,10 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           DMG_NAME="ipatoolUI-${VERSION}-universal.dmg"
 
-          # Create temporary directory for DMG contents
           mkdir -p dmg_contents
           cp -R build/universal/ipatoolUI.app dmg_contents/
           ln -s /Applications dmg_contents/Applications
 
-          # Create DMG
           hdiutil create -volname "ipatoolUI" \
             -srcfolder dmg_contents \
             -ov -format UDZO \
@@ -144,6 +140,7 @@ jobs:
           echo "Created: $DMG_NAME"
 
       - name: Generate checksums
+        shell: bash
         run: |
           VERSION=${{ steps.version.outputs.version }}
           echo "## SHA256 Checksums" > checksums.txt
@@ -182,30 +179,100 @@ jobs:
           path: checksums.txt
           retention-days: 30
 
+  build-windows:
+    name: Build Windows Package
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "push") {
+            $version = "${{ github.ref_name }}"
+          } else {
+            $version = "${{ github.event.inputs.version }}"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Packaging version: $version"
+
+      - name: Create Windows source archive
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $notes = @"
+          Windows compatibility note
+          -------------------------
+          ipatoolUI is currently a macOS-only SwiftUI application and is not a native Windows app.
+          This archive is included so the release workflow retains Windows packaging support while
+          the project remains macOS-specific.
+          "@
+          $notes | Set-Content -Path "WINDOWS_BUILD_NOTES.txt"
+          Compress-Archive -Path . -DestinationPath "ipatoolUI-$version-windows.zip" -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipatoolUI-${{ steps.version.outputs.version }}-windows
+          path: ipatoolUI-${{ steps.version.outputs.version }}-windows.zip
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
           files: |
-            *.dmg
-            checksums.txt
+            release-assets/**/*.dmg
+            release-assets/**/*.zip
+            release-assets/**/checksums.txt
           body: |
             ## Downloads
 
-            | File | Architecture |
-            |------|-------------|
-            | `ipatoolUI-${{ steps.version.outputs.version }}-universal.dmg` | Universal (Apple Silicon + Intel) |
-            | `ipatoolUI-${{ steps.version.outputs.version }}-arm64.dmg` | Apple Silicon (M1/M2/M3) |
-            | `ipatoolUI-${{ steps.version.outputs.version }}-x86_64.dmg` | Intel |
+            | File | Platform |
+            |------|----------|
+            | `ipatoolUI-${{ steps.version.outputs.version }}-universal.dmg` | macOS Universal (Apple Silicon + Intel) |
+            | `ipatoolUI-${{ steps.version.outputs.version }}-arm64.dmg` | macOS Apple Silicon |
+            | `ipatoolUI-${{ steps.version.outputs.version }}-x86_64.dmg` | macOS Intel |
+            | `ipatoolUI-${{ steps.version.outputs.version }}-windows.zip` | Windows source archive |
 
             ## Requirements
-            - macOS 13.0 or later
+            - macOS 13.0 or later for the native app
             - [ipatool](https://github.com/majd/ipatool) installed (`brew install ipatool`)
 
+            ## Notes
+            - The GUI app remains a macOS-native project.
+            - The Windows archive is included to keep the release workflow compatible with Windows runners while the app is being evaluated for future portability.
+
             ## Checksums
-            See `checksums.txt` for SHA256 verification.
+            See the generated `checksums.txt` file for SHA256 verification.
           draft: false
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
