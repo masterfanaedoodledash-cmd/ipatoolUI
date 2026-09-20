@@ -179,46 +179,69 @@ jobs:
           path: checksums.txt
           retention-days: 30
 
+name: Build Windows App
+
+on:
+  push:
+    branches:
+      - patch-1
+      - main
+    paths:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - '.github/workflows/build-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
   build-windows:
-    name: Build Windows Package
+    name: Build Windows app
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get version
-        id: version
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Restore dependencies
+        run: dotnet restore windows/ipatoolUI.Windows.csproj
+
+      - name: Build Windows executable
+        run: >-
+          dotnet publish windows/ipatoolUI.Windows.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output windows/publish
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Package Windows app
         shell: pwsh
         run: |
-          if ("${{ github.event_name }}" -eq "push") {
-            $version = "${{ github.ref_name }}"
-          } else {
-            $version = "${{ github.event.inputs.version }}"
-          }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Packaging version: $version"
+          $version = "${{ github.run_number }}"
+          Compress-Archive `
+            -Path "windows/publish/*" `
+            -DestinationPath "ipatoolUI-windows-$version.zip" `
+            -Force
 
-      - name: Create Windows source archive
-        shell: pwsh
-        run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $notes = @"
-          Windows compatibility note
-          -------------------------
-          ipatoolUI is currently a macOS-only SwiftUI application and is not a native Windows app.
-          This archive is included so the release workflow retains Windows packaging support while
-          the project remains macOS-specific.
-          "@
-          $notes | Set-Content -Path "WINDOWS_BUILD_NOTES.txt"
-          Compress-Archive -Path . -DestinationPath "ipatoolUI-$version-windows.zip" -Force
-
-      - name: Upload Windows artifact
+      - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
-          name: ipatoolUI-${{ steps.version.outputs.version }}-windows
-          path: ipatoolUI-${{ steps.version.outputs.version }}-windows.zip
-          compression-level: 0
+          name: ipatoolUI-windows
+          path: |
+            windows/publish/ipatoolUI.exe
+            ipatoolUI-windows-${{ github.run_number }}.zip
+          if-no-files-found: error
           retention-days: 30
 
   release:
