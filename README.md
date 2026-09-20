@@ -26,8 +26,11 @@ Native SwiftUI wrapper around [ipatool](https://github.com/majd/ipatool) that ke
 1. Install `ipatool` (e.g. `brew install ipatool`).
 2. Open `ipatoolUI.xcodeproj` in Xcode 15 or newer.
 3. Select the *ipatoolUI* scheme and build/run on macOS 13+.
-4. Select the *ipatoolUI* scheme and build/run on Windows
-5. On first launch, visit **Settings → ipatool Binary** to confirm the executable path if it is not auto-detected.
+4. On first launch, visit **Settings → ipatool Binary** to confirm the executable path if it is not auto-detected.
+
+## Windows build status
+
+This project is currently macOS-only. The release workflow now includes a Windows runner to package a source archive for release validation, but the GUI app itself is not a native Windows application yet.
 
 ## Using the app
 
